@@ -34,6 +34,16 @@ import org.scijava.plugin.Plugin;
 @Plugin(type = Command.class, headless = true,
 	menuPath = "Plugins>Microtubule Tracker")
 public class MicrotubuleTracker implements Command, Previewable {
+	
+	private final double PIXEL_MAX = 65535;
+	private final double PIXEL_MIN = 0;
+	
+	private int width = 0;
+	private int height = 0;
+	private int depth = 0;
+	
+	private Dataset dataset;
+	private double[][][] stack;
 
 	@Parameter
 	private LogService log;
@@ -56,14 +66,11 @@ public class MicrotubuleTracker implements Command, Previewable {
 	@Parameter(label = "file")
 	private File file;
 
-
 	@Parameter(label = "Result", type = ItemIO.OUTPUT)
 	private Dataset result;
 
 	@Override
 	public void run() {
-		// add them together
-		Dataset dataset;
 		try {
 			dataset = datasetIOService.open(file.getAbsolutePath());
 		}
@@ -71,8 +78,13 @@ public class MicrotubuleTracker implements Command, Previewable {
 			log.error(e);
 			return;
 		}
+		width = (int) dataset.dimension(0);
+		height = (int) dataset.dimension(1);
+		depth = (int) dataset.dimension(2);
 		
-		result = posterize(dataset, 15000);
+		unpack();
+		posterize(15000);
+		result = pack();
 	}
 
 	@Override
@@ -86,41 +98,68 @@ public class MicrotubuleTracker implements Command, Previewable {
 		statusService.showStatus(header);
 	}
 	
-	@SuppressWarnings({ "rawtypes" })
-	private Dataset invert(Dataset d) {
-		final Dataset result = d.duplicateBlank();
-		final RandomAccess<? extends RealType> ra = d.getImgPlus().randomAccess();
-		final Cursor<? extends RealType> cursor = result.getImgPlus().localizingCursor();
-		final long[] pos = new long[d.numDimensions()];
-		
-		while (cursor.hasNext()) {
-			cursor.fwd();
-			cursor.localize(pos);
-			ra.setPosition(pos);
-			final double val = 65535 - ra.get().getRealDouble();
-			cursor.get().setReal(val);
+	@SuppressWarnings("unused")
+	private void printStack() {
+		System.out.println("---- PRINT STACK ----");
+		for(int i = 0; i < depth; ++i) {
+			System.out.println(stack[i][200][200]);
 		}
-		
-		return result;
 	}
 	
-	@SuppressWarnings({ "rawtypes" })
-	private Dataset posterize(Dataset d, double threshold) {
-		if(threshold < 0 || threshold > 65535) return d;
-		final Dataset result = d.duplicateBlank();
-		final RandomAccess<? extends RealType> ra = d.getImgPlus().randomAccess();
-		final Cursor<? extends RealType> cursor = result.getImgPlus().localizingCursor();
-		final long[] pos = new long[d.numDimensions()];
+	@SuppressWarnings("rawtypes")
+	private void unpack() {
+		stack = new double[depth][height][width];
+		final RandomAccess<? extends RealType> ra = dataset.getImgPlus().randomAccess();
+		final Cursor<? extends RealType> cursor = dataset.getImgPlus().localizingCursor();
+		final long[] pos = new long[dataset.numDimensions()];
 		
 		while (cursor.hasNext()) {
 			cursor.fwd();
 			cursor.localize(pos);
 			ra.setPosition(pos);
-			final double val = ra.get().getRealDouble();
-			cursor.get().setReal(val > threshold ? 65535 : 0);
+			int w = (int) pos[0];
+			int h = (int) pos[1];
+			int d = (int) pos[2];
+			stack[d][h][w] = ra.get().getRealDouble();
 		}
+	}
+	
+	@SuppressWarnings("rawtypes")
+	private Dataset pack() {
+		final Dataset packed = dataset.duplicateBlank();
+		final Cursor<? extends RealType> cursor = packed.getImgPlus().localizingCursor();
+		final long[] pos = new long[dataset.numDimensions()];
 		
-		return result;
+		while (cursor.hasNext()) {
+			cursor.fwd();
+			cursor.localize(pos);
+			int w = (int) pos[0];
+			int h = (int) pos[1];
+			int d = (int) pos[2];
+			cursor.get().setReal(stack[d][h][w]);
+		}
+		return packed;
+	}
+	
+	private void invert() {
+		for(int d = 0; d < depth; ++d) {
+			for(int h = 0; h < height; ++h) {
+				for(int w = 0; w < width; ++w) {
+					stack[d][h][w] = PIXEL_MAX - stack[d][h][w];
+				}
+			}
+		}
+	}
+	
+	private void posterize(double threshold) {
+		if(threshold < PIXEL_MIN || threshold > PIXEL_MAX) return;
+		for(int d = 0; d < depth; ++d) {
+			for(int h = 0; h < height; ++h) {
+				for(int w = 0; w < width; ++w) {
+					stack[d][h][w] = stack[d][h][w] > threshold ? PIXEL_MAX : PIXEL_MIN;
+				}
+			}
+		}
 	}
 
 	public static void main(final String... args) throws Exception {
