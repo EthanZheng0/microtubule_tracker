@@ -10,6 +10,8 @@ import io.scif.services.DatasetIOService;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Deque;
+import java.util.LinkedList;
 
 import net.imagej.Dataset;
 import net.imagej.DatasetService;
@@ -90,8 +92,12 @@ public class MicrotubuleTracker implements Command, Previewable {
 		
 		unpack();
 		posterizeWithAveraging(10);
+		cleanNoise(10);
 		open(structSquare, 1);
+		cleanNoise(5);
 		dilate(structCross, 1);
+		connectComponent(2);
+
 		result = pack();
 	}
 
@@ -259,6 +265,58 @@ public class MicrotubuleTracker implements Command, Previewable {
 	private void close(int[][] struct, int round) {
 		dilate(struct, round);
 		erode(struct, round);
+	}
+	
+	private void cleanNoise(int round) {
+		for(int r = 0; r < round; ++r) {
+			System.out.println("Clean Noise: " + r);
+			double[][][] newStack = new double[depth][1][1];
+			newStack[0] = stack[0];
+			newStack[depth - 1] = stack[depth - 1];
+			for(int d = 0; d < depth; ++d) {
+				double[][] newFrame = deepCopy(stack[d]);
+				for(int h = 0; h < height; ++h) {
+					for(int w = 0; w < width; ++w) {
+						if(d == 0) {
+							if(stack[d + 1][h][w] == PIXEL_MIN) {
+								newFrame[h][w] = PIXEL_MIN;
+							}
+						}
+						else if(d == depth - 1) {
+							if(stack[d - 1][h][w] == PIXEL_MIN) {
+								newFrame[h][w] = PIXEL_MIN;
+							}
+						}
+						else if(stack[d - 1][h][w] == PIXEL_MIN && stack[d + 1][h][w] == PIXEL_MIN) {
+							newFrame[h][w] = PIXEL_MIN;
+						}
+					}
+				}
+				newStack[d] = newFrame;
+			}
+			stack = newStack;
+		}
+	}
+	
+	private void connectComponent(int round) {
+		for(int r = 0; r < round; ++r) {
+			System.out.println("Connect Compnent: " + r);
+			double[][][] newStack = new double[depth][1][1];
+			newStack[0] = stack[0];
+			newStack[depth - 1] = stack[depth - 1];
+			for(int d = 1; d < depth - 1; ++d) {
+				double[][] newFrame = deepCopy(stack[d]);
+				for(int h = 0; h < height; ++h) {
+					for(int w = 0; w < width; ++w) {
+						if(stack[d - 1][h][w] == PIXEL_MAX && stack[d + 1][h][w] == PIXEL_MAX) {
+							newFrame[h][w] = PIXEL_MAX;
+						}
+					}
+				}
+				newStack[d] = newFrame;
+			}
+			stack = newStack;
+		}
 	}
 	
 	public static void main(final String... args) throws Exception {
