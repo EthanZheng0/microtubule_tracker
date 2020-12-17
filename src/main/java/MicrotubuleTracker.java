@@ -38,6 +38,12 @@ public class MicrotubuleTracker implements Command, Previewable {
 	private final double PIXEL_MAX = 65535;
 	private final double PIXEL_MIN = 0;
 	
+	private final int[][] structSquare = {
+			{-1, -1}, {-1, 0}, {-1, 1}, {0, 1}, 
+			{1, 1}, {1, 0}, {1, -1}, {0, -1}};
+	private final int[][] structCross = {
+			{0, 1}, {0, -1}, {1, 0}, {-1, 0}};
+	
 	private int width = 0;
 	private int height = 0;
 	private int depth = 0;
@@ -83,7 +89,9 @@ public class MicrotubuleTracker implements Command, Previewable {
 		depth = (int) dataset.dimension(2);
 		
 		unpack();
-		posterize(15000);
+		posterizeWithAveraging(10);
+		open(structSquare, 1);
+		dilate(structCross, 1);
 		result = pack();
 	}
 
@@ -104,6 +112,16 @@ public class MicrotubuleTracker implements Command, Previewable {
 		for(int i = 0; i < depth; ++i) {
 			System.out.println(stack[i][200][200]);
 		}
+	}
+	
+	private double[][] deepCopy(double[][] src) {
+		double[][] tgt = new double[src.length][src[0].length];
+		for(int r = 0; r < src.length; ++r) {
+			for(int c = 0; c < src[0].length; ++c) {
+				tgt[r][c] = src[r][c];
+			}
+		}
+		return tgt;
 	}
 	
 	@SuppressWarnings("rawtypes")
@@ -161,7 +179,88 @@ public class MicrotubuleTracker implements Command, Previewable {
 			}
 		}
 	}
-
+	
+	private void posterizeWithAveraging(int diameter) {
+		double[][][] blurred = new double[depth][height][width];
+		for(int d = 0; d < depth; ++d) {
+			blurred[d] = average(diameter, d);
+		}
+		for(int d = 0; d < depth; ++d) {
+			for(int h = 0; h < height; ++h) {
+				for(int w = 0; w < width; ++w) {
+					stack[d][h][w] = stack[d][h][w] > blurred[d][h][w] ? PIXEL_MAX : PIXEL_MIN;
+				}
+			}
+		}
+	}
+	
+	private void blur(int diameter) {
+		for(int d = 0; d < depth; ++d) {
+			stack[d] = average(diameter, d);
+		}
+	}
+	
+	private double[][] average(int diameter, int frame) {
+		System.out.println("Averaging: " + frame);
+		double[][] avg = new double[stack[frame].length][stack[frame][0].length];
+		for(int h = 0; h < height; ++h) {
+			for(int w = 0; w < width; ++w) {
+				double sum = 0;
+				int top = Math.max(h - diameter, 0);
+				int bottom = Math.min(h + diameter, height - 1);
+				int left = Math.max(w - diameter, 0);
+				int right = Math.min(w + diameter, width - 1);
+				for(int hh = top; hh <= bottom; ++hh) {
+					for(int ww = left; ww <= right; ++ww) {
+						sum += stack[frame][hh][ww];
+					}
+				}
+				avg[h][w] = sum / ((bottom - top + 1) * (right - left + 1));
+			}
+		}
+		return avg;
+	}
+	
+	private void erode(int[][] struct, int round) {
+		for(int d = 0; d < depth; ++d) {
+			double[][] slice = deepCopy(stack[d]);
+			for(int r = 0; r < round; ++r) {
+				double[][] newSlice = deepCopy(slice);
+				for(int h = 0; h < height; ++h) {
+					for(int w = 0; w < width; ++w) {
+						if(slice[h][w] == PIXEL_MIN) {
+							for(int k = 0; k < struct.length; ++k) {
+								int hh = h + struct[k][0];
+								int ww = w + struct[k][1];
+								if(hh >= 0 && hh < height && ww >= 0 && ww < width) {
+									newSlice[hh][ww] = PIXEL_MIN;
+								}
+							}
+						}
+					}
+				}
+				slice = newSlice;
+			}
+			stack[d] = slice;
+		}
+	}
+	
+	private void dilate(int[][] struct, int round) {
+		invert();
+		erode(struct, round);
+		invert();
+	}
+	
+	private void open(int[][] struct, int round) {
+		erode(struct, round);
+		dilate(struct, round);
+	}
+	
+	private void close(int[][] struct, int round) {
+		dilate(struct, round);
+		erode(struct, round);
+	}
+	
 	public static void main(final String... args) throws Exception {
 		// Create the ImageJ application context with all available services
 		final ImageJ ij = new ImageJ();
