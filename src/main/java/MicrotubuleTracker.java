@@ -6,33 +6,35 @@
  *     https://unlicense.org/
  */
 
-import io.scif.services.DatasetIOService;
-
 import java.io.File;
 import java.io.IOException;
-import java.util.Deque;
-import java.util.LinkedList;
-
-import net.imagej.Dataset;
-import net.imagej.DatasetService;
-import net.imagej.ImageJ;
-import net.imagej.ops.OpService;
-import net.imglib2.Cursor;
-import net.imglib2.RandomAccess;
-import net.imglib2.type.numeric.RealType;
 
 import org.scijava.ItemIO;
 import org.scijava.ItemVisibility;
 import org.scijava.app.StatusService;
 import org.scijava.command.Command;
 import org.scijava.command.Previewable;
+import org.scijava.display.event.input.MsClickedEvent;
+import org.scijava.event.EventHandler;
+import org.scijava.event.SciJavaEvent;
 import org.scijava.log.LogService;
 import org.scijava.plugin.Parameter;
 import org.scijava.plugin.Plugin;
 
-/**
- * Adds two datasets using the ImgLib2 framework.
- */
+import io.scif.services.DatasetIOService;
+import net.imagej.Dataset;
+import net.imagej.DatasetService;
+import net.imagej.DrawingTool;
+import net.imagej.ImageJ;
+import net.imagej.display.ImageDisplayService;
+import net.imagej.display.event.AxisPositionEvent;
+import net.imagej.ops.OpService;
+import net.imagej.render.RenderingService;
+import net.imglib2.Cursor;
+import net.imglib2.RandomAccess;
+import net.imglib2.type.numeric.RealType;
+
+@SuppressWarnings({"unused", "rawtypes"})
 @Plugin(type = Command.class, headless = true,
 	menuPath = "Plugins>Microtubule Tracker")
 public class MicrotubuleTracker implements Command, Previewable {
@@ -50,11 +52,13 @@ public class MicrotubuleTracker implements Command, Previewable {
 	private int height = 0;
 	private int depth = 0;
 	
+	private int currentFrame = 0;
+	
 	private Dataset dataset;
 	private double[][][] stack;
 
 	@Parameter
-	private LogService log;
+	private static LogService log;
 
 	@Parameter
 	private StatusService statusService;
@@ -64,6 +68,12 @@ public class MicrotubuleTracker implements Command, Previewable {
 
 	@Parameter
 	private DatasetIOService datasetIOService;
+	
+	@Parameter
+	private ImageDisplayService imageDisplayService;
+	
+	@Parameter
+	private RenderingService renderingService;
 
 	@Parameter
 	private OpService opService;
@@ -76,7 +86,29 @@ public class MicrotubuleTracker implements Command, Previewable {
 
 	@Parameter(label = "Result", type = ItemIO.OUTPUT)
 	private Dataset result;
+	
+	@EventHandler
+	public void onEvent(final MsClickedEvent evt) {
+		System.out.println("Mouse clicked:");
+		System.out.println("X: " + evt.getX());
+		System.out.println("Y: " + evt.getY());
+		System.out.println("Z: " + currentFrame);
+		
+		final DrawingTool tool = new DrawingTool(result, renderingService);
+		tool.setLineWidth(50);
+		tool.drawDot((int)(Math.random() * 400), (int)(Math.random() * 400));
 
+	}
+
+	@EventHandler
+	public void onEvent(final AxisPositionEvent evt) {
+		currentFrame = imageDisplayService.getActiveDatasetView().getIntPosition(evt.getAxis());
+	}
+	
+	private void logEvent(final SciJavaEvent evt) {
+		log.info("[" + evt.getClass().getSimpleName() + "] " + evt);
+	}
+	
 	@Override
 	public void run() {
 		try {
@@ -91,12 +123,16 @@ public class MicrotubuleTracker implements Command, Previewable {
 		depth = (int) dataset.dimension(2);
 		
 		unpack();
-		posterizeWithAveraging(10);
-		cleanNoise(10);
-		open(structSquare, 1);
-		cleanNoise(5);
-		dilate(structCross, 1);
-		connectComponent(2);
+		
+//		posterizeWithAveraging(10);
+//		cleanNoisePerFrame();
+//		cleanNoiseAcrossFrames(1);
+//		cleanNoisePerFrame();
+//		cleanNoiseAcrossFrames(1);
+//		cleanNoisePerFrame();
+//		cleanNoiseAcrossFrames(1);
+//		dilate(structCross, 1);
+//		connectComponent(2);
 
 		result = pack();
 	}
@@ -112,7 +148,6 @@ public class MicrotubuleTracker implements Command, Previewable {
 		statusService.showStatus(header);
 	}
 	
-	@SuppressWarnings("unused")
 	private void printStack() {
 		System.out.println("---- PRINT STACK ----");
 		for(int i = 0; i < depth; ++i) {
@@ -130,7 +165,6 @@ public class MicrotubuleTracker implements Command, Previewable {
 		return tgt;
 	}
 	
-	@SuppressWarnings("rawtypes")
 	private void unpack() {
 		stack = new double[depth][height][width];
 		final RandomAccess<? extends RealType> ra = dataset.getImgPlus().randomAccess();
@@ -148,7 +182,6 @@ public class MicrotubuleTracker implements Command, Previewable {
 		}
 	}
 	
-	@SuppressWarnings("rawtypes")
 	private Dataset pack() {
 		final Dataset packed = dataset.duplicateBlank();
 		final Cursor<? extends RealType> cursor = packed.getImgPlus().localizingCursor();
@@ -194,7 +227,7 @@ public class MicrotubuleTracker implements Command, Previewable {
 		for(int d = 0; d < depth; ++d) {
 			for(int h = 0; h < height; ++h) {
 				for(int w = 0; w < width; ++w) {
-					stack[d][h][w] = stack[d][h][w] > blurred[d][h][w] ? PIXEL_MAX : PIXEL_MIN;
+					stack[d][h][w] = stack[d][h][w] > blurred[d][h][w] + 1024 ? PIXEL_MAX : PIXEL_MIN;
 				}
 			}
 		}
@@ -267,7 +300,7 @@ public class MicrotubuleTracker implements Command, Previewable {
 		erode(struct, round);
 	}
 	
-	private void cleanNoise(int round) {
+	private void cleanNoiseAcrossFrames(int round) {
 		for(int r = 0; r < round; ++r) {
 			System.out.println("Clean Noise: " + r);
 			double[][][] newStack = new double[depth][1][1];
@@ -295,6 +328,25 @@ public class MicrotubuleTracker implements Command, Previewable {
 				newStack[d] = newFrame;
 			}
 			stack = newStack;
+		}
+	}
+	
+	private void cleanNoisePerFrame() {
+		for(int d = 0; d < depth; ++d) {
+			double[][] newFrame = deepCopy(stack[d]);
+			for(int h = 0; h < height; ++h) {
+				for(int w = 0; w < width; ++w) {
+					if(stack[d][h][w] == PIXEL_MAX) {
+						int count = 0;
+						if(h == 0 || stack[d][h - 1][w] == PIXEL_MIN) count++;
+						if(h == height - 1 || stack[d][h + 1][w] == PIXEL_MIN) count++;
+						if(w == 0 || stack[d][h][w - 1] == PIXEL_MIN) count++;
+						if(w == width - 1 || stack[d][h][w + 1] == PIXEL_MIN) count++;
+						if(count > 2) newFrame[h][w] = PIXEL_MIN;
+					}
+				}
+			}
+			stack[d] = newFrame;
 		}
 	}
 	
