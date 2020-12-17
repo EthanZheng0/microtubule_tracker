@@ -39,8 +39,8 @@ import net.imglib2.type.numeric.RealType;
 	menuPath = "Plugins>Microtubule Tracker")
 public class MicrotubuleTracker implements Command, Previewable {
 	
-	private final double PIXEL_MAX = 65535;
-	private final double PIXEL_MIN = 0;
+	private final double WHITE = 65535;
+	private final double BLACK = 0;
 	
 	private final int[][] structSquare = {
 			{-1, -1}, {-1, 0}, {-1, 1}, {0, 1}, 
@@ -53,6 +53,9 @@ public class MicrotubuleTracker implements Command, Previewable {
 	private int depth = 0;
 	
 	private int currentFrame = 0;
+	private int[] mouseClick1 = new int[2];
+	private int[] mouseClick2 = new int[2];
+	private boolean mouseClickSet = false;
 	
 	private Dataset dataset;
 	private double[][][] stack;
@@ -95,8 +98,22 @@ public class MicrotubuleTracker implements Command, Previewable {
 		System.out.println("Z: " + currentFrame);
 		
 		final DrawingTool tool = new DrawingTool(result, renderingService);
-		tool.setLineWidth(50);
-		tool.drawDot((int)(Math.random() * 400), (int)(Math.random() * 400));
+		tool.setPosition(new long[] {0, 0, currentFrame});
+		if(mouseClickSet) {
+			mouseClick2[0] = evt.getX();
+			mouseClick2[1] = evt.getY();
+			tool.setLineWidth(2);
+			tool.drawLine(mouseClick1[0], mouseClick1[1], mouseClick2[0], mouseClick2[1]);
+			mouseClickSet = false;
+			System.out.println("MouseClick2");
+		}
+		else {
+			mouseClick1[0] = evt.getX();
+			mouseClick1[1] = evt.getY();
+			mouseClickSet = true;
+			System.out.println("MouseClick1");
+		}
+		result.update();
 
 	}
 
@@ -122,19 +139,9 @@ public class MicrotubuleTracker implements Command, Previewable {
 		height = (int) dataset.dimension(1);
 		depth = (int) dataset.dimension(2);
 		
-		unpack();
+		result = dataset;
 		
-//		posterizeWithAveraging(10);
-//		cleanNoisePerFrame();
-//		cleanNoiseAcrossFrames(1);
-//		cleanNoisePerFrame();
-//		cleanNoiseAcrossFrames(1);
-//		cleanNoisePerFrame();
-//		cleanNoiseAcrossFrames(1);
-//		dilate(structCross, 1);
-//		connectComponent(2);
-
-		result = pack();
+		processImage();
 	}
 
 	@Override
@@ -146,6 +153,22 @@ public class MicrotubuleTracker implements Command, Previewable {
 	public void preview() {
 		log.info("previews Microtubule Tracker");
 		statusService.showStatus(header);
+	}
+	
+	private void processImage() {
+		unpack();
+		
+		posterizeWithAveraging(10);
+		cleanNoisePerFrame();
+		cleanNoiseAcrossFrames(1);
+		cleanNoisePerFrame();
+		cleanNoiseAcrossFrames(1);
+		cleanNoisePerFrame();
+		cleanNoiseAcrossFrames(1);
+		dilate(structCross, 1);
+		connectComponent(2);
+
+		result = pack();
 	}
 	
 	private void printStack() {
@@ -202,18 +225,18 @@ public class MicrotubuleTracker implements Command, Previewable {
 		for(int d = 0; d < depth; ++d) {
 			for(int h = 0; h < height; ++h) {
 				for(int w = 0; w < width; ++w) {
-					stack[d][h][w] = PIXEL_MAX - stack[d][h][w];
+					stack[d][h][w] = WHITE - stack[d][h][w];
 				}
 			}
 		}
 	}
 	
 	private void posterize(double threshold) {
-		if(threshold < PIXEL_MIN || threshold > PIXEL_MAX) return;
+		if(threshold < BLACK || threshold > WHITE) return;
 		for(int d = 0; d < depth; ++d) {
 			for(int h = 0; h < height; ++h) {
 				for(int w = 0; w < width; ++w) {
-					stack[d][h][w] = stack[d][h][w] > threshold ? PIXEL_MAX : PIXEL_MIN;
+					stack[d][h][w] = stack[d][h][w] > threshold ? WHITE : BLACK;
 				}
 			}
 		}
@@ -227,7 +250,7 @@ public class MicrotubuleTracker implements Command, Previewable {
 		for(int d = 0; d < depth; ++d) {
 			for(int h = 0; h < height; ++h) {
 				for(int w = 0; w < width; ++w) {
-					stack[d][h][w] = stack[d][h][w] > blurred[d][h][w] + 1024 ? PIXEL_MAX : PIXEL_MIN;
+					stack[d][h][w] = stack[d][h][w] > blurred[d][h][w] + 1024 ? WHITE : BLACK;
 				}
 			}
 		}
@@ -267,12 +290,12 @@ public class MicrotubuleTracker implements Command, Previewable {
 				double[][] newSlice = deepCopy(slice);
 				for(int h = 0; h < height; ++h) {
 					for(int w = 0; w < width; ++w) {
-						if(slice[h][w] == PIXEL_MIN) {
+						if(slice[h][w] == BLACK) {
 							for(int k = 0; k < struct.length; ++k) {
 								int hh = h + struct[k][0];
 								int ww = w + struct[k][1];
 								if(hh >= 0 && hh < height && ww >= 0 && ww < width) {
-									newSlice[hh][ww] = PIXEL_MIN;
+									newSlice[hh][ww] = BLACK;
 								}
 							}
 						}
@@ -311,17 +334,17 @@ public class MicrotubuleTracker implements Command, Previewable {
 				for(int h = 0; h < height; ++h) {
 					for(int w = 0; w < width; ++w) {
 						if(d == 0) {
-							if(stack[d + 1][h][w] == PIXEL_MIN) {
-								newFrame[h][w] = PIXEL_MIN;
+							if(stack[d + 1][h][w] == BLACK) {
+								newFrame[h][w] = BLACK;
 							}
 						}
 						else if(d == depth - 1) {
-							if(stack[d - 1][h][w] == PIXEL_MIN) {
-								newFrame[h][w] = PIXEL_MIN;
+							if(stack[d - 1][h][w] == BLACK) {
+								newFrame[h][w] = BLACK;
 							}
 						}
-						else if(stack[d - 1][h][w] == PIXEL_MIN && stack[d + 1][h][w] == PIXEL_MIN) {
-							newFrame[h][w] = PIXEL_MIN;
+						else if(stack[d - 1][h][w] == BLACK && stack[d + 1][h][w] == BLACK) {
+							newFrame[h][w] = BLACK;
 						}
 					}
 				}
@@ -336,13 +359,13 @@ public class MicrotubuleTracker implements Command, Previewable {
 			double[][] newFrame = deepCopy(stack[d]);
 			for(int h = 0; h < height; ++h) {
 				for(int w = 0; w < width; ++w) {
-					if(stack[d][h][w] == PIXEL_MAX) {
+					if(stack[d][h][w] == WHITE) {
 						int count = 0;
-						if(h == 0 || stack[d][h - 1][w] == PIXEL_MIN) count++;
-						if(h == height - 1 || stack[d][h + 1][w] == PIXEL_MIN) count++;
-						if(w == 0 || stack[d][h][w - 1] == PIXEL_MIN) count++;
-						if(w == width - 1 || stack[d][h][w + 1] == PIXEL_MIN) count++;
-						if(count > 2) newFrame[h][w] = PIXEL_MIN;
+						if(h == 0 || stack[d][h - 1][w] == BLACK) count++;
+						if(h == height - 1 || stack[d][h + 1][w] == BLACK) count++;
+						if(w == 0 || stack[d][h][w - 1] == BLACK) count++;
+						if(w == width - 1 || stack[d][h][w + 1] == BLACK) count++;
+						if(count > 2) newFrame[h][w] = BLACK;
 					}
 				}
 			}
@@ -360,8 +383,8 @@ public class MicrotubuleTracker implements Command, Previewable {
 				double[][] newFrame = deepCopy(stack[d]);
 				for(int h = 0; h < height; ++h) {
 					for(int w = 0; w < width; ++w) {
-						if(stack[d - 1][h][w] == PIXEL_MAX && stack[d + 1][h][w] == PIXEL_MAX) {
-							newFrame[h][w] = PIXEL_MAX;
+						if(stack[d - 1][h][w] == WHITE && stack[d + 1][h][w] == WHITE) {
+							newFrame[h][w] = WHITE;
 						}
 					}
 				}
